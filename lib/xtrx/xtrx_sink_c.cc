@@ -334,11 +334,11 @@ double xtrx_sink_c::get_bandwidth( size_t chan )
 
 
 static const std::map<std::string, xtrx_antenna_t> s_ant_map = boost::assign::map_list_of
-    ("B1", XTRX_TX_L)
+    ("B1", XTRX_TX_H)
     ("B2", XTRX_TX_W)
     ;
 static const std::map<xtrx_antenna_t, std::string> s_ant_map_r = boost::assign::map_list_of
-    (XTRX_TX_L, "B1")
+    (XTRX_TX_H, "B1")
     (XTRX_TX_W, "B2")
     ;
 
