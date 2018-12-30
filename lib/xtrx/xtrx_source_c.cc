@@ -55,8 +55,6 @@ static size_t parse_nchan(const std::string &args)
 
   if (nchan < 1)
     nchan = 1;
-  else if (nchan > 2)
-    nchan = 2;
 
   return nchan;
 }
@@ -75,12 +73,17 @@ xtrx_source_c::xtrx_source_c(const std::string &args) :
   _bandwidth(0),
   _auto_gain(false),
   _otw(XTRX_WF_16),
-  _mimo_mode(parse_nchan(args) > 1),
+  _mimo_mode(false),
+  _gain_lna(0),
+  _gain_tia(0),
+  _gain_pga(0),
+  _channels(parse_nchan(args)),
   _swap_ab(false),
   _swap_iq(false),
   _loopback(false),
   _tdd(false),
   _fbctrl(false),
+  _timekey(false),
   _dsp(0)
 {
   _id = pmt::string_to_symbol(args);
@@ -103,16 +106,6 @@ xtrx_source_c::xtrx_source_c(const std::string &args) :
   if (dict.count("master")) {
     _master = boost::lexical_cast< double >( dict["master"]);
   }
-
-  _channels = parse_nchan(args);
-
-  /*
-  if (dict.count("direct_samp"))
-    direct_samp = boost::lexical_cast< unsigned int >( dict["direct_samp"] );
-
-  if (dict.count("offset_tune"))
-    offset_tune = boost::lexical_cast< unsigned int >( dict["offset_tune"] );
-*/
 
   std::cerr << args.c_str() << std::endl;
 
@@ -155,38 +148,47 @@ xtrx_source_c::xtrx_source_c(const std::string &args) :
   }
 
   if (dict.count("dsp")) {
-      _dsp = boost::lexical_cast< double >( dict["dsp"] );
-      std::cerr << "xtrx_source_c: DSP:" << _dsp;
+    _dsp = boost::lexical_cast< double >( dict["dsp"] );
+    std::cerr << "xtrx_source_c: DSP:" << _dsp;
   }
 
   if (dict.count("dev")) {
-      _dev =  dict["dev"];
-      std::cerr << "xtrx_source_c: XTRX device: %s" << _dev.c_str();
+    _dev =  dict["dev"];
+    std::cerr << "xtrx_source_c: XTRX device: %s" << _dev.c_str();
   }
 
   _xtrx = xtrx_obj::get(_dev.c_str(), loglevel, lmsreset);
+  if (_xtrx->dev_count() * 2 == _channels) {
+    _mimo_mode = true;
+  } else if (_xtrx->dev_count() != _channels) {
+    throw std::runtime_error("Number of requested channels != number of devices");
+  }
 
   if (dict.count("refclk")) {
-      xtrx_set_ref_clk(_xtrx->dev(), boost::lexical_cast< unsigned >( dict["refclk"] ), XTRX_CLKSRC_INT);
-    }
+    xtrx_set_ref_clk(_xtrx->dev(), boost::lexical_cast< unsigned >( dict["refclk"] ), XTRX_CLKSRC_INT);
+  }
   if (dict.count("extclk")) {
-      xtrx_set_ref_clk(_xtrx->dev(), boost::lexical_cast< unsigned >( dict["extclk"] ), XTRX_CLKSRC_EXT);
-    }
+    xtrx_set_ref_clk(_xtrx->dev(), boost::lexical_cast< unsigned >( dict["extclk"] ), XTRX_CLKSRC_EXT);
+  }
 
   if (dict.count("vio")) {
-      unsigned vio = boost::lexical_cast< unsigned >( dict["vio"] );
-      _xtrx->set_vio(vio);
-    }
+    unsigned vio = boost::lexical_cast< unsigned >( dict["vio"] );
+    _xtrx->set_vio(vio);
+  }
 
   if (dict.count("dac")) {
-      unsigned dac = boost::lexical_cast< unsigned >( dict["dac"] );
-      xtrx_val_set(_xtrx->dev(), XTRX_TRX, XTRX_CH_AB, XTRX_VCTCXO_DAC_VAL, dac);
-    }
+    unsigned dac = boost::lexical_cast< unsigned >( dict["dac"] );
+    xtrx_val_set(_xtrx->dev(), XTRX_TRX, XTRX_CH_ALL, XTRX_VCTCXO_DAC_VAL, dac);
+  }
 
   if (dict.count("pmode")) {
-      unsigned pmode = boost::lexical_cast< unsigned >( dict["pmode"] );
-      xtrx_val_set(_xtrx->dev(), XTRX_TRX, XTRX_CH_AB, XTRX_LMS7_PWR_MODE, pmode);
-    }
+    unsigned pmode = boost::lexical_cast< unsigned >( dict["pmode"] );
+    xtrx_val_set(_xtrx->dev(), XTRX_TRX, XTRX_CH_ALL, XTRX_LMS7_PWR_MODE, pmode);
+  }
+
+  if (dict.count("timekey")) {
+    _timekey = boost::lexical_cast< bool >( dict["timekey"] );
+  }
 
   std::cerr << "xtrx_source_c::xtrx_source_c()" << std::endl;
   set_alignment(32);
@@ -254,14 +256,16 @@ double xtrx_source_c::set_center_freq( double freq, size_t chan )
   if (_tdd)
     return get_center_freq(chan);
 
+  xtrx_channel_t xchan = (xtrx_channel_t)(XTRX_CH_A << chan);
+
   std::cerr << "Set freq " << freq << std::endl;
 
-  int res = xtrx_tune(_xtrx->dev(), XTRX_TUNE_RX_FDD, corr_freq - _dsp, &_freq);
+  int res = xtrx_tune_ex(_xtrx->dev(), XTRX_TUNE_RX_FDD, xchan, corr_freq - _dsp, &_freq);
   if (res) {
     std::cerr << "Unable to deliver frequency " << corr_freq << std::endl;
   }
 
-  res = xtrx_tune(_xtrx->dev(), XTRX_TUNE_BB_RX, _dsp, NULL);
+  res = xtrx_tune_ex(_xtrx->dev(), XTRX_TUNE_BB_RX, xchan, _dsp, NULL);
 
   return get_center_freq(chan);
 }
@@ -298,14 +302,14 @@ static xtrx_gain_type_t get_gain_type(const std::string& name)
 
   it = s_lna_map.find(name);
   if (it != s_lna_map.end()) {
-    return it->second;
+	return it->second;
   }
 
   return XTRX_RX_LNA_GAIN;
 }
 
 static const std::vector<std::string> s_lna_list = boost::assign::list_of
-    ("LNA")("TIA")("PGA")("LB")
+  ("LNA")("TIA")("PGA")("LB")
     ;
 
 std::vector<std::string> xtrx_source_c::get_gain_names( size_t chan )
@@ -365,7 +369,8 @@ double xtrx_source_c::set_gain( double igain, const std::string & name, size_t c
 
   std::cerr << "Set gain " << name << " (" << gt << "): " << igain << std::endl;
 
-  int res = xtrx_set_gain(_xtrx->dev(), /*(chan == 0) ? XTRX_CH_A : XTRX_CH_B*/ XTRX_CH_AB, gt, gain, &actual_gain);
+  int res = xtrx_set_gain(_xtrx->dev(), (xtrx_channel_t)(XTRX_CH_A << chan),
+                          gt, gain, &actual_gain);
   if (res) {
     std::cerr << "Unable to set gain `" << name.c_str() << "`; err=" << res << std::endl;
   }
@@ -413,7 +418,8 @@ double xtrx_source_c::set_bandwidth( double bandwidth, size_t chan )
     }
   }
 
-  int res = xtrx_tune_rx_bandwidth(_xtrx->dev(), (chan == 0) ? XTRX_CH_A : XTRX_CH_B, bandwidth, &_bandwidth);
+  int res = xtrx_tune_rx_bandwidth(_xtrx->dev(), (xtrx_channel_t)(XTRX_CH_A << chan),
+                                   bandwidth, &_bandwidth);
   if (res) {
     std::cerr << "Can't set bandwidth: " << res << std::endl;
   }
@@ -457,7 +463,7 @@ static xtrx_antenna_t get_ant_type(const std::string& name)
     return it->second;
   }
 
-  return XTRX_RX_W;
+  return XTRX_RX_AUTO;
 }
 
 static const std::vector<std::string> s_ant_list = boost::assign::list_of
@@ -475,9 +481,10 @@ std::string xtrx_source_c::set_antenna( const std::string & antenna, size_t chan
   boost::mutex::scoped_lock lock(_xtrx->mtx);
   _ant = get_ant_type(antenna);
 
-  std::cerr << "Set antenna " << antenna << std::endl;
+  std::cerr << "Set antenna " << antenna << " type:" << _ant << std::endl;
 
-  int res = xtrx_set_antenna(_xtrx->dev(), _ant);
+  int res = xtrx_set_antenna_ex(_xtrx->dev(), (xtrx_channel_t)(XTRX_CH_A << chan),
+                                _ant);
   if (res) {
     std::cerr << "Can't set antenna: " << antenna << std::endl;
   }
@@ -507,6 +514,23 @@ int xtrx_source_c::work (int noutput_items,
     throw std::runtime_error( message.str() );
   }
 
+  if (_timekey) {
+    uint64_t seconds = (ri.out_first_sample / _rate);
+    double fractional = (ri.out_first_sample - (uint64_t)(_rate * seconds)) / _rate;
+
+    //std::cerr << "Time " << seconds << ":" << fractional << std::endl;
+    const pmt::pmt_t val = pmt::make_tuple
+        (pmt::from_uint64(seconds),
+         pmt::from_double(fractional));
+    for(size_t i = 0; i < output_items.size(); i++) {
+      this->add_item_tag(i, nitems_written(0), TIME_KEY,
+                         val, _id);
+      this->add_item_tag(i, nitems_written(0), RATE_KEY,
+                         pmt::from_double(_rate), _id);
+      this->add_item_tag(i, nitems_written(0), FREQ_KEY,
+                         pmt::from_double(this->get_center_freq(i)), _id);
+    }
+  }
   return ri.out_samples;
 }
 
@@ -540,7 +564,7 @@ bool xtrx_source_c::start()
     std::cerr << "Got error: " << res << std::endl;
   }
 
-  res = xtrx_tune(_xtrx->dev(), XTRX_TUNE_BB_RX, _dsp, NULL);
+  res = xtrx_tune_ex(_xtrx->dev(), XTRX_TUNE_BB_RX, XTRX_CH_ALL, _dsp, NULL);
 
   return res == 0;
 }
@@ -557,3 +581,4 @@ bool xtrx_source_c::stop()
 
   return res == 0;
 }
+

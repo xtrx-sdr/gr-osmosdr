@@ -44,6 +44,7 @@ public:
   static void clear_all();
 
   xtrx_dev* dev() { return _obj; }
+  unsigned dev_count() { return _devices; }
 
   double set_smaplerate(double rate, double master, bool sink, unsigned flags);
 
@@ -61,6 +62,7 @@ protected:
   double    _source_master;
 
   unsigned  _flags;
+  unsigned  _devices;
 };
 
 #endif // XTRX_OBJ_H

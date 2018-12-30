@@ -27,6 +27,13 @@
 #include "sink_iface.h"
 #include "xtrx_obj.h"
 
+
+static const pmt::pmt_t SOB_KEY = pmt::string_to_symbol("tx_sob");
+static const pmt::pmt_t EOB_KEY = pmt::string_to_symbol("tx_eob");
+static const pmt::pmt_t TIME_KEY = pmt::string_to_symbol("tx_time");
+static const pmt::pmt_t FREQ_KEY = pmt::string_to_symbol("tx_freq");
+static const pmt::pmt_t COMMAND_KEY = pmt::string_to_symbol("tx_command");
+
 class xtrx_sink_c;
 
 typedef boost::shared_ptr< xtrx_sink_c > xtrx_sink_c_sptr;
@@ -85,8 +92,11 @@ public:
   bool start();
   bool stop();
 
+  void tag_process(int ninput_items);
+
 private:
   xtrx_obj_sptr _xtrx;
+  std::vector<gr::tag_t> _tags;
 
   unsigned _sample_flags;
   double _rate;

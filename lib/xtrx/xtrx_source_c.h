@@ -26,6 +26,10 @@
 #include "source_iface.h"
 #include "xtrx_obj.h"
 
+static const pmt::pmt_t TIME_KEY = pmt::string_to_symbol("rx_time");
+static const pmt::pmt_t RATE_KEY = pmt::string_to_symbol("rx_rate");
+static const pmt::pmt_t FREQ_KEY = pmt::string_to_symbol("rx_freq");
+
 class xtrx_source_c;
 
 typedef boost::shared_ptr< xtrx_source_c > xtrx_source_c_sptr;
@@ -114,6 +118,7 @@ private:
   bool     _loopback;
   bool     _tdd;
   bool     _fbctrl;
+  bool     _timekey;
 
   double   _dsp;
   std::string _dev;

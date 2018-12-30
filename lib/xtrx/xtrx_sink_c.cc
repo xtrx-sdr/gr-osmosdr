@@ -55,8 +55,6 @@ static size_t parse_nchan(const std::string &args)
 
   if (nchan < 1)
     nchan = 1;
-  else if (nchan > 2)
-    nchan = 2;
 
   return nchan;
 }
@@ -76,7 +74,9 @@ xtrx_sink_c::xtrx_sink_c(const std::string &args) :
   _dsp(0),
   _auto_gain(false),
   _otw(XTRX_WF_16),
-  _mimo_mode(parse_nchan(args) > 1),
+  _mimo_mode(false),
+  _gain_tx(0),
+  _channels(parse_nchan(args)),
   _ts(8192),
   _swap_ab(false),
   _swap_iq(false),
@@ -90,16 +90,6 @@ xtrx_sink_c::xtrx_sink_c(const std::string &args) :
   if (dict.count("master")) {
     _master = boost::lexical_cast< double >( dict["master"]);
   }
-
-  _channels = parse_nchan(args);
-
-  /*
-  if (dict.count("direct_samp"))
-    direct_samp = boost::lexical_cast< unsigned int >( dict["direct_samp"] );
-
-  if (dict.count("offset_tune"))
-    offset_tune = boost::lexical_cast< unsigned int >( dict["offset_tune"] );
-*/
 
   std::cerr << args.c_str() << std::endl;
 
@@ -151,7 +141,11 @@ xtrx_sink_c::xtrx_sink_c(const std::string &args) :
   }
 
   _xtrx = xtrx_obj::get(_dev.c_str(), loglevel, lmsreset);
-
+  if (_xtrx->dev_count() * 2 == _channels) {
+    _mimo_mode = true;
+  } else if (_xtrx->dev_count() != _channels) {
+    throw std::runtime_error("Number of requested channels != number of devices");
+  }
   if (dict.count("refclk")) {
     xtrx_set_ref_clk(_xtrx->dev(), boost::lexical_cast< unsigned >( dict["refclk"] ), XTRX_CLKSRC_INT);
   }
@@ -213,13 +207,14 @@ double xtrx_sink_c::set_center_freq( double freq, size_t chan )
   double corr_freq = (freq)*(1.0 + (_corr) * 0.000001);
 
   std::cerr << "TX Set freq " << freq << std::endl;
+  xtrx_channel_t xchan = (xtrx_channel_t)(XTRX_CH_A << chan);
 
-  int res = xtrx_tune(_xtrx->dev(), (_tdd) ? XTRX_TUNE_TX_AND_RX_TDD : XTRX_TUNE_TX_FDD, corr_freq - _dsp, &_freq);
+  int res = xtrx_tune_ex(_xtrx->dev(), (_tdd) ? XTRX_TUNE_TX_AND_RX_TDD : XTRX_TUNE_TX_FDD, xchan, corr_freq - _dsp, &_freq);
   if (res) {
     std::cerr << "Unable to deliver frequency " << corr_freq << std::endl;
   }
 
-  res = xtrx_tune(_xtrx->dev(), XTRX_TUNE_BB_TX, _dsp, NULL);
+  res = xtrx_tune_ex(_xtrx->dev(), XTRX_TUNE_BB_TX, xchan, _dsp, NULL);
   return get_center_freq(chan);
 }
 
@@ -288,7 +283,7 @@ double xtrx_sink_c::set_gain( double igain, const std::string & name, size_t cha
 
   std::cerr << "Set TX gain: " << igain << std::endl;
 
-  int res = xtrx_set_gain(_xtrx->dev(), /*(chan == 0) ? XTRX_CH_A : XTRX_CH_B*/ XTRX_CH_AB,
+  int res = xtrx_set_gain(_xtrx->dev(), (xtrx_channel_t)(XTRX_CH_A << chan),
                           XTRX_TX_PAD_GAIN, gain, &actual_gain);
   if (res) {
     std::cerr << "Unable to set gain `" << name.c_str() << "`; err=" << res << std::endl;
@@ -320,7 +315,9 @@ double xtrx_sink_c::set_bandwidth( double bandwidth, size_t chan )
     }
   }
 
-  int res = xtrx_tune_tx_bandwidth(_xtrx->dev(), (chan == 0) ? XTRX_CH_A : XTRX_CH_B, bandwidth, &_bandwidth);
+  int res = xtrx_tune_tx_bandwidth(_xtrx->dev(),
+                                   (xtrx_channel_t)(XTRX_CH_A << chan),
+                                   bandwidth, &_bandwidth);
   if (res) {
     std::cerr << "Can't set bandwidth: " << res << std::endl;
   }
@@ -334,13 +331,17 @@ double xtrx_sink_c::get_bandwidth( size_t chan )
 
 
 static const std::map<std::string, xtrx_antenna_t> s_ant_map = boost::assign::map_list_of
-    ("B1", XTRX_TX_L)
-    ("B2", XTRX_TX_W)
-    ;
+  ("AUTO", XTRX_TX_AUTO)
+  ("B1", XTRX_TX_H)
+  ("B2", XTRX_TX_W)
+  ("TXH", XTRX_TX_H)
+  ("TXW", XTRX_TX_W)
+  ;
 static const std::map<xtrx_antenna_t, std::string> s_ant_map_r = boost::assign::map_list_of
-    (XTRX_TX_L, "B1")
-    (XTRX_TX_W, "B2")
-    ;
+  (XTRX_TX_H, "TXH")
+  (XTRX_TX_W, "TXW")
+  (XTRX_TX_AUTO, "AUTO")
+  ;
 
 static xtrx_antenna_t get_ant_type(const std::string& name)
 {
@@ -351,12 +352,12 @@ static xtrx_antenna_t get_ant_type(const std::string& name)
     return it->second;
   }
 
-  return XTRX_RX_W;
+  return XTRX_TX_AUTO;
 }
 
 static const std::vector<std::string> s_ant_list = boost::assign::list_of
-    ("B1")("B2")
-    ;
+  ("AUTO")("TXH")("TXW")
+  ;
 
 
 std::vector< std::string > xtrx_sink_c::get_antennas( size_t chan )
@@ -371,7 +372,9 @@ std::string xtrx_sink_c::set_antenna( const std::string & antenna, size_t chan )
 
   std::cerr << "Set antenna " << antenna << std::endl;
 
-  int res = xtrx_set_antenna(_xtrx->dev(), _ant);
+  int res = xtrx_set_antenna_ex(_xtrx->dev(),
+                                (xtrx_channel_t)(XTRX_CH_A << chan),
+                                _ant);
   if (res) {
     std::cerr << "Can't set antenna: " << antenna << std::endl;
   }
@@ -383,17 +386,60 @@ std::string xtrx_sink_c::get_antenna( size_t chan )
   return s_ant_map_r.find(_ant)->second;
 }
 
+void xtrx_sink_c::tag_process(int ninput_items)
+{
+  std::sort(_tags.begin(), _tags.end(), gr::tag_t::offset_compare);
+
+  const uint64_t samp0_count = this->nitems_read(0);
+  uint64_t max_count = samp0_count + ninput_items;
+
+  bool found_time_tag = false;
+  BOOST_FOREACH(const gr::tag_t &my_tag, _tags) {
+    const uint64_t my_tag_count = my_tag.offset;
+    const pmt::pmt_t &key = my_tag.key;
+    const pmt::pmt_t &value = my_tag.value;
+
+    if (my_tag_count >= max_count) {
+      break;
+    } else if(pmt::equal(key, TIME_KEY)) {
+      //if (my_tag_count != samp0_count) {
+      //    max_count = my_tag_count;
+      //    break;
+      //}
+      found_time_tag = true;
+      //_metadata.has_time_spec = true;
+      //_metadata.time_spec = ::uhd::time_spec_t
+      //      (pmt::to_uint64(pmt::tuple_ref(value, 0)),
+      //       pmt::to_double(pmt::tuple_ref(value, 1)));
+      uint64_t seconds = pmt::to_uint64(pmt::tuple_ref(value, 0));
+      double fractional = pmt::to_double(pmt::tuple_ref(value, 1));
+
+      std::cerr << "TX_TIME: " << seconds << ":" << fractional << std::endl;
+    }
+  } // end foreach
+
+  if (found_time_tag) {
+    //_metadata.has_time_spec = true;
+  }
+}
+
 int xtrx_sink_c::work (int noutput_items,
                        gr_vector_const_void_star &input_items,
                        gr_vector_void_star &output_items)
 {
+  int ninput_items = noutput_items;
+  const uint64_t samp0_count = nitems_read(0);
+  get_tags_in_range(_tags, 0, samp0_count, samp0_count + ninput_items);
+  if (!_tags.empty())
+    tag_process(ninput_items);
+
   xtrx_send_ex_info_t nfo;
   nfo.samples = noutput_items;
   nfo.buffer_count = input_items.size();
   nfo.buffers = &input_items[0];
   nfo.flags = XTRX_TX_DONT_BUFFER;
   if (!_allow_dis)
-	nfo.flags |= XTRX_TX_NO_DISCARD;
+    nfo.flags |= XTRX_TX_NO_DISCARD;
   nfo.ts = _ts;
   nfo.timeout = 0;
 

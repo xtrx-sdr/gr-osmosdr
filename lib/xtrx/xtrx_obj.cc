@@ -68,13 +68,15 @@ xtrx_obj::xtrx_obj(const std::string &path, unsigned loglevel, bool lmsreset)
   unsigned xtrxflag = (loglevel & XTRX_O_LOGLVL_MASK) | ((lmsreset) ? XTRX_O_RESET : 0);
   std::cerr << "xtrx_obj::xtrx_obj = " << xtrxflag << std::endl;
 
-  int res = xtrx_open((path.length() == 0) ? NULL : path.c_str(), xtrxflag, &_obj);
-  if (res) {
+  int res = xtrx_open_list(path.c_str(), NULL, &_obj);
+  if (res < 0) {
     std::stringstream message;
     message << "Couldn't open "  ": Error: " << -res;
 
     throw std::runtime_error( message.str() );
   }
+
+  _devices = res;
 }
 
 double xtrx_obj::set_smaplerate(double rate, double master, bool sink, unsigned flags)
@@ -123,7 +125,6 @@ double xtrx_obj::set_smaplerate(double rate, double master, bool sink, unsigned 
     return txrate;
   return rxrate;
 }
-
 
 xtrx_obj::~xtrx_obj()
 {
