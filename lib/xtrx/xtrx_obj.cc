@@ -26,9 +26,7 @@
 
 static std::map<std::string, xtrx_obj_sptr> s_objects;
 
-xtrx_obj_sptr xtrx_obj::get(const char* xtrx_dev,
-                            unsigned loglevel,
-                            bool lmsreset)
+xtrx_obj_sptr xtrx_obj::get(const char* xtrx_dev)
 {
   std::map<std::string, xtrx_obj_sptr>::iterator i;
   std::string name(xtrx_dev);
@@ -36,7 +34,7 @@ xtrx_obj_sptr xtrx_obj::get(const char* xtrx_dev,
   i = s_objects.find(name);
   if (i == s_objects.end()) {
     // No such object
-    s_objects[name].reset(new xtrx_obj(name, loglevel, lmsreset));
+	s_objects[name].reset(new xtrx_obj(name));
   }
 
   return s_objects[name];
@@ -56,7 +54,7 @@ std::vector<std::string> xtrx_obj::get_devices()
 }
 
 
-xtrx_obj::xtrx_obj(const std::string &path, unsigned loglevel, bool lmsreset)
+xtrx_obj::xtrx_obj(const std::string &path)
   : _run(false)
   , _vio(0)
   , _sink_rate(0)
@@ -65,10 +63,7 @@ xtrx_obj::xtrx_obj(const std::string &path, unsigned loglevel, bool lmsreset)
   , _source_master(0)
   , _flags(0)
 {
-  unsigned xtrxflag = (loglevel & XTRX_O_LOGLVL_MASK) | ((lmsreset) ? XTRX_O_RESET : 0);
-  std::cerr << "xtrx_obj::xtrx_obj = " << xtrxflag << std::endl;
-
-  int res = xtrx_open_list(path.c_str(), NULL, &_obj);
+  int res = xtrx_open_string(path.c_str(), &_obj);
   if (res < 0) {
     std::stringstream message;
     message << "Couldn't open "  ": Error: " << -res;

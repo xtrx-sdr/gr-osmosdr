@@ -109,14 +109,9 @@ xtrx_source_c::xtrx_source_c(const std::string &args) :
 
   std::cerr << args.c_str() << std::endl;
 
-  int loglevel = 4;
+  int loglevel = 2;
   if (dict.count("loglevel")) {
     loglevel = boost::lexical_cast< int >( dict["loglevel"] );
-  }
-
-  bool lmsreset = 0;
-  if (dict.count("lmsreset")) {
-    lmsreset = boost::lexical_cast< bool >( dict["lmsreset"] );
   }
 
   if (dict.count("fbctrl")) {
@@ -125,12 +120,12 @@ xtrx_source_c::xtrx_source_c(const std::string &args) :
 
   if (dict.count("swap_ab")) {
     _swap_ab = true;
-    std::cerr << "xtrx_source_c: swap AB channels";
+	std::cerr << "xtrx_source_c: swap AB channels" << std::endl;
   }
 
   if (dict.count("swap_iq")) {
     _swap_iq = true;
-    std::cerr << "xtrx_source_c: swap IQ";
+	std::cerr << "xtrx_source_c: swap IQ" << std::endl;
   }
 
   if (dict.count("sfl")) {
@@ -139,25 +134,26 @@ xtrx_source_c::xtrx_source_c(const std::string &args) :
 
   if (dict.count("loopback")) {
     _loopback = true;
-    std::cerr << "xtrx_source_c: loopback";
+	std::cerr << "xtrx_source_c: loopback" << std::endl;
   }
 
   if (dict.count("tdd")) {
     _tdd = true;
-    std::cerr << "xtrx_source_c: TDD mode";
+	std::cerr << "xtrx_source_c: TDD mode" << std::endl;
   }
 
   if (dict.count("dsp")) {
     _dsp = boost::lexical_cast< double >( dict["dsp"] );
-    std::cerr << "xtrx_source_c: DSP:" << _dsp;
+	std::cerr << "xtrx_source_c: DSP:" << _dsp << std::endl;
   }
 
   if (dict.count("dev")) {
     _dev =  dict["dev"];
-    std::cerr << "xtrx_source_c: XTRX device: %s" << _dev.c_str();
+	std::cerr << "xtrx_source_c: XTRX device string `" << _dev.c_str() << "`" << std::endl;
   }
 
-  _xtrx = xtrx_obj::get(_dev.c_str(), loglevel, lmsreset);
+  xtrx_log_setlevel(loglevel, NULL);
+  _xtrx = xtrx_obj::get(_dev.c_str());
   if (_xtrx->dev_count() * 2 == _channels) {
     _mimo_mode = true;
   } else if (_xtrx->dev_count() != _channels) {
@@ -258,7 +254,7 @@ double xtrx_source_c::set_center_freq( double freq, size_t chan )
 
   xtrx_channel_t xchan = (xtrx_channel_t)(XTRX_CH_A << chan);
 
-  std::cerr << "Set freq " << freq << std::endl;
+  std::cerr << "Set RX freq: " << freq << " chan: " << xchan << std::endl;
 
   int res = xtrx_tune_ex(_xtrx->dev(), XTRX_TUNE_RX_FDD, xchan, corr_freq - _dsp, &_freq);
   if (res) {
@@ -367,7 +363,7 @@ double xtrx_source_c::set_gain( double igain, const std::string & name, size_t c
   double actual_gain;
   xtrx_gain_type_t gt = get_gain_type(name);
 
-  std::cerr << "Set gain " << name << " (" << gt << "): " << igain << std::endl;
+  std::cerr << "Set gain " << name << " chan: " << chan << " (" << gt << "): " << igain << std::endl;
 
   int res = xtrx_set_gain(_xtrx->dev(), (xtrx_channel_t)(XTRX_CH_A << chan),
                           gt, gain, &actual_gain);
@@ -444,6 +440,7 @@ static const std::map<std::string, xtrx_antenna_t> s_ant_map = boost::assign::ma
     ("RXW", XTRX_RX_W)
     ("RXL_LB", XTRX_RX_L_LB)
     ("RXW_LB", XTRX_RX_W_LB)
+	("ADC", XTRX_RX_ADC_EXT)
     ;
 static const std::map<xtrx_antenna_t, std::string> s_ant_map_r = boost::assign::map_list_of
     (XTRX_RX_AUTO, "AUTO")
@@ -452,6 +449,7 @@ static const std::map<xtrx_antenna_t, std::string> s_ant_map_r = boost::assign::
     (XTRX_RX_W, "RXW")
     (XTRX_RX_L_LB, "RXL_LB")
     (XTRX_RX_W_LB, "RXW_LB")
+	(XTRX_RX_ADC_EXT, "ADC")
     ;
 
 static xtrx_antenna_t get_ant_type(const std::string& name)
@@ -467,7 +465,7 @@ static xtrx_antenna_t get_ant_type(const std::string& name)
 }
 
 static const std::vector<std::string> s_ant_list = boost::assign::list_of
-    ("AUTO")("RXL")("RXH")("RXW")
+	("AUTO")("RXL")("RXH")("RXW")("ADC")
     ;
 
 
@@ -511,7 +509,8 @@ int xtrx_source_c::work (int noutput_items,
   if (res) {
     std::stringstream message;
     message << "xtrx_recv_sync error: " << -res;
-    throw std::runtime_error( message.str() );
+	throw std::runtime_error( message.str() );
+	return 0;
   }
 
   if (_timekey) {
@@ -553,7 +552,7 @@ bool xtrx_source_c::start()
 
   params.rx.hfmt = XTRX_IQ_FLOAT32;
   params.rx.wfmt = _otw;
-  params.rx.chs = XTRX_CH_AB;
+  params.rx.chs = XTRX_CH_ALL;
   params.rx.paketsize = 0;
   params.rx_stream_start = 256*1024;
 

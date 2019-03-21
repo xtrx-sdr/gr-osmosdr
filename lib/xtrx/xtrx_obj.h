@@ -33,14 +33,12 @@ typedef boost::shared_ptr<xtrx_obj> xtrx_obj_sptr;
 class xtrx_obj
 {
 public:
-  xtrx_obj(const std::string& path, unsigned loglevel, bool lmsreset);
+  xtrx_obj(const std::string& path);
   ~xtrx_obj();
 
   static std::vector<std::string> get_devices();
 
-  static xtrx_obj_sptr get(const char* xtrx_dev,
-                           unsigned loglevel,
-                           bool lmsreset);
+  static xtrx_obj_sptr get(const char* xtrx_dev);
   static void clear_all();
 
   xtrx_dev* dev() { return _obj; }
